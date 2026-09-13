@@ -1,0 +1,10 @@
+node_modules/
+dist-pages/
+docs/
+.sites-runtime/
+.env*
+!.env.example
+supabase/.temp/
+supabase/.branches/
+*.tsbuildinfo
+.DS_Store
