@@ -142,19 +142,22 @@ export default function ClientPortal() {
   if (session.recovery && session.identity) return <ResetPassword/>;
   if (session.checking) return <PortalFrame><section className="client-card" role="status"><LoaderCircle className="spin client-state-icon"/><h1>Checking your access…</h1></section></PortalFrame>;
   if (!session.identity) return <LoginForm/>;
-  if (!canOpenStudio(session.access)) return <PortalFrame><section className="client-card">
+  const allowed = canOpenStudio(session.access);
+  const accessGate = !allowed ? <PortalFrame><section className="client-card">
     <Clock3 className="client-state-icon"/>
     <span className="client-kicker">{session.identity.email}</span>
     <h1>{session.error ? 'Access check needed.' : session.access?.account.status === 'revoked' ? 'Your access is inactive.' : 'Awaiting approval.'}</h1>
     <p>{session.error || (session.access?.account.status === 'revoked' ? 'Robustthreed has disabled access for this account. Contact us if you need it restored.' : 'Your account is ready. Robustthreed will review your request before you can use the generator.')}</p>
     <div className="client-actions"><Button onClick={session.refresh}>Check access</Button>{logout}</div>
     {logoutError && <div className="client-alert" role="alert">{logoutError}</div>}
-  </section></PortalFrame>;
+  </section></PortalFrame> : null;
 
-  const admin = session.access!.is_admin;
+  const admin = allowed && session.access!.is_admin;
   return <>
+    {accessGate}
+    <div hidden={!allowed} inert={!allowed}>
     <div className="client-account-bar">
-      <div><span className="client-account-role">{admin ? 'Administrator' : 'Approved client'}</span><strong>{session.access!.account.display_name || session.access!.account.email}</strong></div>
+      <div><span className="client-account-role">{admin ? 'Administrator' : 'Approved client'}</span><strong>{session.access?.account.display_name || session.identity.email}</strong></div>
       <nav aria-label="Account navigation">
         {admin && <><Button variant={view === 'studio' ? 'secondary' : 'ghost'} aria-pressed={view === 'studio'} onClick={() => setView('studio')}><Box size={16}/>Studio</Button><Button variant={view === 'clients' ? 'secondary' : 'ghost'} aria-pressed={view === 'clients'} onClick={() => setView('clients')}><Users size={16}/>Clients</Button></>}
         {logout}
@@ -162,8 +165,9 @@ export default function ClientPortal() {
     </div>
     {logoutError && <div className="client-alert client-global-alert" role="alert">{logoutError}</div>}
     <Suspense fallback={<p className="client-loading" role="status">Opening your workspace…</p>}>
-      <div hidden={admin && view === 'clients'}><Studio key={session.identity.id}/></div>
+      <div hidden={admin && view === 'clients'}>{session.workspaceOwner === session.identity.id && <Studio key={session.identity.id}/>}</div>
       {admin && view === 'clients' && <ClientAdmin/>}
     </Suspense>
+    </div>
   </>;
 }

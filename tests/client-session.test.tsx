@@ -1,4 +1,4 @@
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
@@ -30,7 +30,10 @@ vi.mock('../lib/auth-client', () => ({
     }),
   },
 }));
-vi.mock('../components/studio', () => ({ default: () => <section data-testid="studio">STL workspace</section> }));
+vi.mock('../components/studio', () => ({ default: function Workspace() {
+  const [file, setFile] = useState<File | null>(null);
+  return <section data-testid="studio"><input type="file" onChange={event => setFile(event.target.files?.[0] ?? null)}/><span>{file?.name ?? 'STL workspace'}</span></section>;
+} }));
 import ClientPortal from '../components/client-portal';
 
 const alice = '10000000-0000-4000-8000-000000000002';
@@ -65,7 +68,10 @@ async function signIn(id: string) {
   });
 }
 async function advance(ms: number) { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); }
-const hasStudio = () => !!container.querySelector('[data-testid="studio"]');
+const hasStudio = () => {
+  const studio = container.querySelector('[data-testid="studio"]');
+  return !!studio && !studio.closest('[hidden], [inert]');
+};
 
 test('a login alone does not mount the converter; approval and revocation are refreshed', async () => {
   expect(container.textContent).toContain('Sign in');
@@ -112,4 +118,58 @@ test('a response for another user cannot unlock the studio', async () => {
   harness.response = profile(alice, 'approved'); await signIn(bob);
   expect(hasStudio()).toBe(false);
   expect(container.textContent).toContain('could not verify your access');
+});
+
+
+test('returning after a suspended tab preserves the workspace while locking expired access', async () => {
+  harness.response = profile(alice, 'approved'); await signIn(alice);
+  const workspace = container.querySelector('[data-testid="studio"]');
+  const input = workspace!.querySelector('input')!;
+  Object.defineProperty(input, 'files', { value: [new File(['<svg/>'], 'client-art.svg')] });
+  await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(workspace!.textContent).toContain('client-art.svg');
+  // Moving wall time without firing timers reproduces a suspended background tab.
+  vi.setSystemTime(Date.now() + 60_000);
+  harness.stall = true;
+  await act(async () => { window.dispatchEvent(new Event('focus')); });
+  expect(hasStudio()).toBe(false);
+  expect(container.querySelector('[data-testid="studio"]')).toBe(workspace);
+  await act(async () => { harness.pending.shift()?.({ data: profile(alice, 'approved'), error: null }); });
+  expect(hasStudio()).toBe(true);
+  expect(container.querySelector('[data-testid="studio"]')).toBe(workspace);
+  expect(workspace!.textContent).toContain('client-art.svg');
+  harness.stall = false;
+  await signIn(alice);
+  await act(async () => {
+    harness.listener?.('TOKEN_REFRESHED', { user: { id: alice, email: 'client@example.invalid' } });
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(container.querySelector('[data-testid="studio"]')).toBe(workspace);
+});
+
+test('temporary network failures preserve work, but revocation destroys it', async () => {
+  harness.response = profile(alice, 'approved'); await signIn(alice);
+  const workspace = container.querySelector('[data-testid="studio"]');
+  await act(async () => { window.dispatchEvent(new Event('offline')); });
+  expect(hasStudio()).toBe(false);
+  expect(container.querySelector('[data-testid="studio"]')).toBe(workspace);
+  await act(async () => { window.dispatchEvent(new Event('online')); });
+  expect(hasStudio()).toBe(true);
+  expect(container.querySelector('[data-testid="studio"]')).toBe(workspace);
+  harness.response = profile(alice, 'revoked');
+  await advance(15_000);
+  expect(container.querySelector('[data-testid="studio"]')).toBeNull();
+});
+
+
+test('changing to another approved account and signing out discard retained files', async () => {
+  harness.response = profile(alice, 'approved'); await signIn(alice);
+  const original = container.querySelector('[data-testid="studio"]');
+  harness.response = profile(bob, 'approved'); await signIn(bob);
+  expect(hasStudio()).toBe(true);
+  expect(container.querySelector('[data-testid="studio"]')).not.toBe(original);
+  await act(async () => { window.dispatchEvent(new Event('offline')); });
+  await act(async () => { harness.listener?.('SIGNED_OUT', null); });
+  expect(container.querySelector('[data-testid="studio"]')).toBeNull();
 });

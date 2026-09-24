@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { authClient } from './auth-client';
-import { ACCESS_LEASE_MS, ACCESS_REFRESH_MS, AUTH_REQUEST_TIMEOUT_MS, readAccess, type ClientAccess } from './client-access';
+import { ACCESS_LEASE_MS, ACCESS_REFRESH_MS, AUTH_REQUEST_TIMEOUT_MS, canOpenStudio, readAccess, type ClientAccess } from './client-access';
 
 export function useClientSession() {
   const [identity, setIdentity] = useState<{ id: string; email: string } | null>(null);
   const [access, setAccess] = useState<ClientAccess | null>(null);
+  // Retain an already opened workspace through transient verification failures.
+  // This is not an access grant: the portal hides it until access is verified.
+  const [workspaceOwner, setWorkspaceOwner] = useState<string | null>(null);
   const [checking, setChecking] = useState(!!authClient);
   const [error, setError] = useState('');
   const [recovery, setRecovery] = useState(false);
@@ -40,7 +43,10 @@ export function useClientSession() {
         const result = await client.rpc('studio_access').abortSignal(controller.signal);
         if (!active || version !== generation) return;
         if (result.error) throw result.error;
-        const next = readAccess(result.data, expected);
+        let next: ClientAccess;
+        try { next = readAccess(result.data, expected); }
+        catch (error) { setWorkspaceOwner(null); throw error; }
+        setWorkspaceOwner(canOpenStudio(next) ? expected : null);
         setAccess(next);
         setError('');
         deadline = Date.now() + ACCESS_LEASE_MS;
@@ -76,6 +82,7 @@ export function useClientSession() {
         clearTimeout(leaseTimer);
         deadline = 0;
         setAccess(null);
+        setWorkspaceOwner(null);
         setError('');
       }
       userId = nextId;
@@ -119,5 +126,5 @@ export function useClientSession() {
   }, []);
 
   const refresh = useCallback(() => refreshRef.current(), []);
-  return { identity, access, checking, error, recovery, refresh };
+  return { identity, access, workspaceOwner, checking, error, recovery, refresh };
 }
