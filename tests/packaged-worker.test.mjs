@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import ts from 'typescript';
+import { unzipSync, strFromU8 } from 'fflate';
 import vm,{ runInNewContext,createContext,runInContext } from 'node:vm';
 
 if(isMainThread) {
@@ -15,7 +16,7 @@ if(isMainThread) {
   // directly by its filename would miss invalid file:// URLs in the client code.
   const pageUrl=new URL(pages?'https://studio.example.test/ROBUSTTHREED_ART-MODEL_GENERATOR_MAX/':'https://studio.example.test/');
   const chunks=pages?'assets':'_next/static/chunks';
-  const chunkDir=path.join(root,chunks), workerUrls=[];
+  const chunkDir=path.join(root,chunks), workerUrls=[], exportUrls=[];
   if(pages){
     const html=await readFile(path.join(root,'index.html'),'utf8');
     for(const match of html.matchAll(/(?:src|href)="([^"]+)"/g)){
@@ -34,19 +35,21 @@ if(isMainThread) {
         // Auth libraries can ship a separate, runtime-configured heartbeat
         // Worker. Select the emitted conversion entry, whose static URL must
         // still be present exactly once and resolve under the repository path.
-        if(!node.arguments[0].getText(source).includes('conversion.worker-'))return;
+        const argumentText=node.arguments[0].getText(source);
+        if(!argumentText.includes('conversion.worker-')&&!argumentText.includes('export-3mf.worker-'))return;
         const expression=node.arguments[0].getText(source).replace(/import\.meta\.url/g,JSON.stringify(new URL(chunks+'/'+chunk,pageUrl).href));
         const argument=runInNewContext(expression,{URL,location:pageUrl,window:{location:pageUrl}},{timeout:500});
         const url=new URL(String(argument),pageUrl);
         assert.equal(url.protocol,'https:','The published Worker constructor must not resolve to an internal file URL.');
         assert.equal(url.origin,pageUrl.origin,'The converter must load from the website origin.');
         assert.ok(url.pathname.startsWith(pageUrl.pathname),'The converter must retain the repository URL prefix.');
-        workerUrls.push(url);
+        (argumentText.includes('export-3mf.worker-')?exportUrls:workerUrls).push(url);
       }
       ts.forEachChild(node,visit);
     }
     visit(source);
   }
+  assert.equal(exportUrls.length,1,'Exactly one 3MF export worker must be emitted.');
   assert.equal(workerUrls.length,1,'Exactly one browser converter must be emitted.');
   const workerUrl=workerUrls[0],entry=path.basename(workerUrl.pathname);
   assert.match(entry,/^conversion\.worker-.*\.js$/);
@@ -90,7 +93,22 @@ if(isMainThread) {
     assert.equal(image.result.checks.connectedSolids,1);
     const roundtrip=await run({id:'traced-svg',source:image.trace.svg});
     assert.deepEqual(new Uint8Array(roundtrip.result.stl),new Uint8Array(image.result.stl),'The downloadable SVG and image must produce identical STLs.');
-    console.log(JSON.stringify({passed:true,hosting:pages?'GitHub Pages':'Sites',pagePath:pageUrl.pathname,packagedWorker:entry,svg:{dimensions:result.dimensions,triangles:result.triangles,stlBytes:result.stl.byteLength},image:{dimensions:image.result.dimensions,triangles:image.result.triangles,traceBytes:image.trace.svg.length},exactSvgRoundtrip:true}));
+    const exporter=new Worker(new URL(import.meta.url),{execArgv:['--experimental-vm-modules'],workerData:{root,url:exportUrls[0].href,basePath:pageUrl.pathname,origin:pageUrl.origin}});
+    try {
+      const exported=await new Promise((resolve,reject)=>{
+        const timeout=setTimeout(()=>reject(new Error('3MF worker timed out')),60000);
+        exporter.once('error',error=>{clearTimeout(timeout);reject(error);});
+        exporter.once('message',message=>{clearTimeout(timeout);message.type==='error'?reject(new Error(message.error)):resolve(message);});
+        exporter.postMessage({name:'Image stencil',positions:image.result.positions,indices:image.result.indices});
+      });
+      assert.ok(exported.bytes instanceof Uint8Array);
+      const entries=unzipSync(exported.bytes);
+      assert.match(strFromU8(entries['3D/3dmodel.model']),/White base - 1.6 mm/);
+      assert.match(strFromU8(entries['Metadata/model_settings.config']),/key="extruder" value="2"/);
+      assert.deepEqual(JSON.parse(strFromU8(entries['Metadata/project_settings.config'])).filament_colour,['#FFFFFF','#000000']);
+      assert.ok(image.result.positions.byteLength>0,'3MF export must not detach the existing preview.');
+    } finally {await exporter.terminate();}
+    console.log(JSON.stringify({passed:true,hosting:pages?'GitHub Pages':'Sites',pagePath:pageUrl.pathname,packagedWorker:entry,svg:{dimensions:result.dimensions,triangles:result.triangles,stlBytes:result.stl.byteLength},image:{dimensions:image.result.dimensions,triangles:image.result.triangles,traceBytes:image.trace.svg.length},exactSvgRoundtrip:true,coloured3mf:true}));
   } finally {await worker.terminate();}
 } else {
   const {SourceTextModule}=vm;

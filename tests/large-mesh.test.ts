@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import Module from 'manifold-3d';
 import {convertSvg} from '../lib/convert';
+import {exportThreeMf} from '../lib/export-3mf';
 
 // A solid backing with circular recesses exercises real curved geometry near
 // the export ceiling. No duplicated faces or artificial subdivisions are used.
@@ -28,5 +29,7 @@ if(oversize){
   const analyticVolume=112*112*2.2-side*side*Math.PI*radius*radius*.6;
   assert.ok(Math.abs(model.volume-analyticVolume)<.05,'Retain the analytically defined recesses and layer volume.');
   assert.deepEqual(model.checks,{watertight:true,connectedSolids:1,winding:true,dimensions:true});
-  console.log(JSON.stringify({passed:true,case:'near-limit valid solid',triangles:model.triangles,vertices:model.vertices,stlBytes:model.stl.byteLength,dimensions:model.dimensions,volume:model.volume,analyticVolume,sha256:createHash('sha256').update(new Uint8Array(model.stl)).digest('hex'),milliseconds:Math.round(performance.now()-started),peakRssMb:Math.round(process.resourceUsage().maxRSS/1024),checks:model.checks}));
+  const threeMf=process.argv.includes('--3mf')?exportThreeMf({...model,name:'Five million triangle export check'}):undefined;
+  if(threeMf){assert.ok(threeMf.length>1000);assert.equal(threeMf[0],0x50);assert.equal(threeMf[1],0x4b);assert.ok(model.positions.byteLength>0);}
+  console.log(JSON.stringify({passed:true,threeMfBytes:threeMf?.length,case:'near-limit valid solid',triangles:model.triangles,vertices:model.vertices,stlBytes:model.stl.byteLength,dimensions:model.dimensions,volume:model.volume,analyticVolume,sha256:createHash('sha256').update(new Uint8Array(model.stl)).digest('hex'),milliseconds:Math.round(performance.now()-started),peakRssMb:Math.round(process.resourceUsage().maxRSS/1024),checks:model.checks}));
 }

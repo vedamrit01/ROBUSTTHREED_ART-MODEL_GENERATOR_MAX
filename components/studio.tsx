@@ -12,6 +12,8 @@ import {TRACE_DEFAULTS,type ImageTrace,type TraceSettings} from '@/lib/image-set
 import type {ConversionMessage,ConversionRequest,FailureKind,WorkStage} from '@/lib/worker-protocol';
 import {ArtworkPreview,ImageTracingControls} from './image-tracing';
 import ConversionWorker from '../lib/conversion.worker?worker';
+import ThreeMfWorker from '../lib/export-3mf.worker?worker';
+import type { ThreeMfMessage } from '../lib/export-3mf';
 
 const ModelViewer=lazy(()=>import('./model-viewer'));
 type Job={id:string;name:string;kind:InputKind;source?:string;image?:Blob;settings:TraceSettings;trace?:ImageTrace;example:boolean;status:'queued'|'working'|'ready'|'error';stage?:WorkStage;result?:ConversionResult;error?:string;errorKind?:FailureKind};
@@ -29,6 +31,9 @@ function download(data:ArrayBuffer|Uint8Array,name:string,type:string) {
 }
 
 export default function Studio() {
+  const [exporting3mf,setExporting3mf]=useState('');
+  const exportTask=useRef<{id:string;worker:Worker;timer:ReturnType<typeof setTimeout>}|null>(null);
+  const cancelExport=useCallback(()=>{if(exportTask.current){exportTask.current.worker.terminate();clearTimeout(exportTask.current.timer);exportTask.current=null;}if(mounted.current)setExporting3mf('');},[]);
   const [jobs,setJobs]=useState<Job[]>([]),jobsRef=useRef<Job[]>([]);
   const [selectedId,setSelectedId]=useState(''),[notice,setNotice]=useState(''),[dragging,setDragging]=useState(false),[view,setView]=useState<'3d'|'top'|'svg'|'source'>('3d'),[resetKey,setResetKey]=useState(0),[exampleLoading,setExampleLoading]=useState(false),[zipping,setZipping]=useState(false);
   const input=useRef<HTMLInputElement>(null),svgInput=useRef<HTMLInputElement>(null),imageInput=useRef<HTMLInputElement>(null),worker=useRef<Worker|null>(null),busy=useRef<string|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null),mounted=useRef(false),exampleRequest=useRef(0),pumpRef=useRef<()=>void>(()=>{});
@@ -85,8 +90,8 @@ export default function Studio() {
   },[enqueue]);
   useEffect(()=>{
     mounted.current=true;void loadExample(true);
-    return()=>{mounted.current=false;exampleRequest.current++;stopWorker();busy.current=null;for(const [id,resolve]of resolvers.current)resolve({id,filename:'',kind:'svg',status:'cancelled'});resolvers.current.clear();};
-  },[loadExample,stopWorker]);
+    return()=>{mounted.current=false;cancelExport();exampleRequest.current++;stopWorker();busy.current=null;for(const [id,resolve]of resolvers.current)resolve({id,filename:'',kind:'svg',status:'cancelled'});resolvers.current.clear();};
+  },[loadExample,stopWorker,cancelExport]);
   async function addFiles(files:File[]) {
     setDragging(false);
     try{
@@ -98,13 +103,34 @@ export default function Studio() {
     finally{for(const control of [input.current,svgInput.current,imageInput.current])if(control)control.value='';}
   }
   const remove=useCallback((id:string)=>{
+    if(exportTask.current?.id===id)cancelExport();
     if(busy.current===id){stopWorker();busy.current=null;}
     resolvers.current.get(id)?.({id,filename:jobsRef.current.find(j=>j.id===id)?.name||'',kind:jobsRef.current.find(j=>j.id===id)?.kind||'svg',status:'cancelled'});resolvers.current.delete(id);
     update(current=>current.filter(j=>j.id!==id));setSelectedId(current=>current===id?(jobsRef.current[0]?.id||''):current);pumpRef.current();
-  },[stopWorker,update]);
-  const retry=(id:string,settings?:TraceSettings)=>{update(current=>current.map(j=>j.id===id?{...j,status:'queued',settings:settings??j.settings,error:undefined,errorKind:undefined,result:undefined,trace:undefined}:j));pumpRef.current();};
+  },[stopWorker,update,cancelExport]);
+  const retry=(id:string,settings?:TraceSettings)=>{if(exportTask.current?.id===id)cancelExport();update(current=>current.map(j=>j.id===id?{...j,status:'queued',settings:settings??j.settings,error:undefined,errorKind:undefined,result:undefined,trace:undefined}:j));pumpRef.current();};
   const downloadSvg=useCallback((id:string)=>{const job=jobsRef.current.find(j=>j.id===id);if(!job?.trace)throw new Error('Wait for the image trace to finish.');download(new TextEncoder().encode(job.trace.svg),cleanName(job.name)+'-traced.svg','image/svg+xml');return outcome(job);},[]);
   const downloadModel=useCallback((id:string)=>{const job=jobsRef.current.find(j=>j.id===id);if(!job?.result||job.status!=='ready')throw new Error('Select a model that has passed validation.');download(job.result.stl,cleanName(job.name)+'.stl','model/stl');return outcome(job);},[]);
+  function download3mf(id:string) {
+    if(exportTask.current)return;
+    const job=jobsRef.current.find(j=>j.id===id);
+    if(!job?.result||job.status!=='ready')return;
+    setExporting3mf(id);setNotice('');
+    try {
+      const exporter=new ThreeMfWorker();
+      const fail=(message:string)=>{cancelExport();if(mounted.current)setNotice(message);};
+      exportTask.current={id,worker:exporter,timer:setTimeout(()=>fail('3MF preparation timed out. Try again or download the STL.'),CONVERSION_TIMEOUTS.svg)};
+      exporter.onmessage=(event:MessageEvent<ThreeMfMessage>)=>{
+        if(event.data.type==='error'){fail(event.data.error);return;}
+        try {download(event.data.bytes,cleanName(job.name)+'-white-black.3mf','model/3mf');}
+        catch {setNotice('The 3MF download could not start. Please try again.');}
+        finally {cancelExport();}
+      };
+      exporter.onerror=()=>fail('The 3MF exporter was interrupted. Try again or download the STL.');
+      // Clone these arrays: transferring them would detach the live preview.
+      exporter.postMessage({name:cleanName(job.name),positions:job.result.positions,indices:job.result.indices});
+    }catch {cancelExport();setNotice('The 3MF exporter could not start. Please try again.');}
+  }
   async function downloadBatch(){
     setZipping(true);
     try {
@@ -188,13 +214,13 @@ export default function Studio() {
           <div className="viewport-footer"><span>{view==='svg'?'Smooth, filled vector paths':view==='source'?'Source image':<><MousePointer2 size={12}/>Drag to orbit · Scroll to zoom</>}</span><span>{view==='source'&&selected?.trace?selected.trace.originalDimensions.join(' × ')+' px':'120 × 120 mm artboard'}</span></div>
         </div>
         {selected?.kind==='image'&&selected.trace&&<div className={'trace-result-note'+(selected.error?' trace-error':'')} role={selected.error?'alert':undefined}>{selected.error||((selected.trace.mode==='dark'?'Dark artwork':'Photo outlines')+' traced · Image proportions preserved on a square page.')}{selected.error&&<span>Inspect the SVG and adjust Image tracing above.</span>}</div>}
-        <div className="layer-legend"><span><i className="base-swatch"/>Silhouette <strong>1.6 mm</strong></span><span><i className="art-swatch"/>Artwork <strong>0.6 mm</strong></span><small>Colors indicate height. STL exports geometry.</small></div>
+        <div className="layer-legend"><span><i className="base-swatch"/>Silhouette <strong>1.6 mm</strong></span><span><i className="art-swatch"/>Artwork <strong>0.6 mm</strong></span><small>White base · Black artwork · Colours included in 3MF.</small></div>
         <div className="export-panel">
           <div className="measurement-heading"><span className="eyebrow">FINISHED MODEL</span><span>Artboard scale preserved</span></div>
-          <div className="measurements-and-action"><dl className="measurements"><div><dt>Width</dt><dd>{result?formatted(result.dimensions[0]):'—'}<span>mm</span></dd></div><div><dt>Height</dt><dd>{result?formatted(result.dimensions[1]):'—'}<span>mm</span></dd></div><div><dt>Thickness</dt><dd>{result?formatted(result.dimensions[2]):'—'}<span>mm</span></dd></div></dl><div className="export-actions"><Button className="download-button" disabled={!result} onClick={()=>selected&&downloadModel(selected.id)}><ArrowDownToLine size={18}/>Download STL<ArrowUpRight size={17}/></Button>{selected?.kind==='image'&&<Button variant="outline" className="download-svg" disabled={!selected.trace} onClick={()=>downloadSvg(selected.id)}><FileCode2 size={16}/>Download traced SVG</Button>}</div></div>
+          <div className="measurements-and-action"><dl className="measurements"><div><dt>Width</dt><dd>{result?formatted(result.dimensions[0]):'—'}<span>mm</span></dd></div><div><dt>Height</dt><dd>{result?formatted(result.dimensions[1]):'—'}<span>mm</span></dd></div><div><dt>Thickness</dt><dd>{result?formatted(result.dimensions[2]):'—'}<span>mm</span></dd></div></dl><div className="export-actions"><Button variant="outline" className="download-3mf" disabled={!result||!!exporting3mf} onClick={()=>selected&&download3mf(selected.id)}>{exporting3mf===selected?.id?<LoaderCircle className="spin" size={18}/>:<Layers3 size={18}/>} {exporting3mf===selected?.id?'Preparing 3MF…':'Download coloured 3MF'}</Button><Button className="download-button" disabled={!result} onClick={()=>selected&&downloadModel(selected.id)}><ArrowDownToLine size={18}/>Download STL<ArrowUpRight size={17}/></Button>{selected?.kind==='image'&&<Button variant="outline" className="download-svg" disabled={!selected.trace} onClick={()=>downloadSvg(selected.id)}><FileCode2 size={16}/>Download traced SVG</Button>}</div></div>
           <div className="validation-strip">{result?<><span><ShieldCheck size={15}/>Watertight</span><span><Check size={14}/>1 connected solid</span><span><Check size={14}/>Dimensions verified</span><span className="triangle-count">{result.triangles.toLocaleString()} triangles</span></>:<><ShieldCheck size={15}/><span>Every STL must pass solid and dimension checks before export.</span></>}</div>
         </div>
-        <div className="workflow-caption"><span>STL has no unit or color metadata. Import your model in <strong>millimeters</strong>.</span></div>
+        <div className="workflow-caption"><span><strong>Bambu Studio:</strong> 3MF includes a white 1.6 mm base and black 0.6 mm artwork as aligned parts. Map white to filament 1 and black to filament 2, select your printer and print settings, then slice. STL remains a single solid in millimeters.</span></div>
       </section>
     </div>
     <footer className="studio-footer"><span><LockKeyhole size={12}/>ROBUSTTHREED WORKFLOW · v1.0</span><span>Files stay in your browser and clear when you leave or reload this page.</span></footer>

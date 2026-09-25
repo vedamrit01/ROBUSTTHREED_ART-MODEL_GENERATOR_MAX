@@ -13,7 +13,8 @@
     "test:images": "node --import tsx tests/image-pipeline.test.ts",
     "test:pages": "node tests/packaged-worker.test.mjs --pages",
     "test:access": "node --import tsx --test tests/client-access.test.ts",
-    "test:access-ui": "vitest run --config vitest.config.ts"
+    "test:access-ui": "vitest run --config vitest.config.ts",
+    "test:3mf": "node --import tsx tests/export-3mf.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

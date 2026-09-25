@@ -33,7 +33,7 @@ export default function ModelViewer({model,view,resetKey}:{model:ConversionResul
     const material=new THREE.MeshStandardMaterial({color:0xffffff,roughness:.78,metalness:0,flatShading:true});
     material.onBeforeCompile=shader=>{
       shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nvarying float reliefZ;').replace('#include <begin_vertex>','#include <begin_vertex>\nreliefZ = position.z;');
-      shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>\nvarying float reliefZ;').replace('#include <color_fragment>','#include <color_fragment>\ndiffuseColor.rgb *= reliefZ > 1.6001 ? vec3(0.019, 0.028, 0.026) : vec3(0.89, 0.91, 0.86);');
+      shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>\nvarying float reliefZ;').replace('#include <color_fragment>','#include <color_fragment>\ndiffuseColor.rgb *= reliefZ > 1.6001 ? vec3(0.015) : vec3(1.0);');
     };
     const mesh=new THREE.Mesh(geometry,material);scene.add(mesh);
     const grid=new THREE.GridHelper(120,12,0xafbeb0,0xd0dace);grid.rotation.x=Math.PI/2;grid.position.z=-.12;scene.add(grid);

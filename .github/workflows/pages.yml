@@ -46,6 +46,8 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      - name: Verify coloured 3MF geometry and packaging
+        run: pnpm test:3mf
       - name: Verify SVG and image converters
         run: node tests/packaged-worker.test.mjs --pages
       - name: Configure Pages

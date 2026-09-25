@@ -54,6 +54,16 @@ GitHub displays the actual live address after a successful deployment. The expec
 
 GitHub Pages requires an eligible plan for a private repository. Public repositories can use Pages on GitHub Free.
 
+## White / black 3MF for Bambu Studio
+
+Use **Download coloured 3MF** on a validated SVG or image model. The archive contains one assembled object with two aligned, closed material parts: white backing at Z 0–1.6 mm (filament 1) and black artwork at Z 1.6–2.2 mm (filament 2). All exterior geometry and the existing STL export remain unchanged. Extra internal faces close the material interface; the five-million-triangle limit continues to apply to the original exterior model.
+
+Open the 3MF in Bambu Studio and retain its colour/material assignments. If your version presents a colour-mapping dialog, map white to your white filament and black to your black filament. Select your printer, nozzle, filament profiles and process settings, then slice and check Preview. The download contains no printer preset, process settings or G-code. Filament colours are assignments, not a guarantee of the physically loaded filament.
+
+Export runs in a separate browser worker and streams compressed XML, keeping the UI responsive. Removing/retrying the model or leaving the workspace cancels its export. The preview buffers remain usable after downloading. The current STL ZIP download still contains STLs.
+
+Automated checks cover closed meshes, part heights/volumes, holes and islands, XML/ZIP packaging, Bambu component/part IDs and filament mapping, plus both production workers. A desktop Bambu Studio import was not executable in the development environment because required system libraries were unavailable.
+
 ## Development
 
 Use Node.js **24** and pnpm **11.19.0**:
@@ -70,6 +80,7 @@ pnpm exec tsc --noEmit
 pnpm build
 pnpm test:pages
 pnpm test:engine
+pnpm test:3mf
 pnpm preview
 ```
 
@@ -79,6 +90,7 @@ Optional large-model checks, each in a fresh process:
 
 ```sh
 node --import tsx tests/large-mesh.test.ts
+node --import tsx tests/large-mesh.test.ts --3mf
 node --import tsx tests/large-mesh.test.ts --oversize
 ```
 
