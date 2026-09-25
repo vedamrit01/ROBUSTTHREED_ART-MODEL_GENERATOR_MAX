@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { DOMParser } from '@xmldom/xmldom';
-import { unzipSync, strFromU8 } from 'fflate';
+import { unzipSync, unzlibSync, strFromU8 } from 'fflate';
 import Module from 'manifold-3d';
 import { convertSvg } from '../lib/convert';
 import { exportThreeMf, separateLayers } from '../lib/export-3mf';
@@ -31,8 +31,32 @@ for (const source of sources) {
   }
   const bytes = exportThreeMf({ ...original, name: 'Artwork & "white/black" <test>' });
   const entries = unzipSync(bytes);
-  assert.deepEqual(Object.keys(entries).sort(), ['3D/3dmodel.model', 'Metadata/model_settings.config', 'Metadata/project_settings.config', '[Content_Types].xml', '_rels/.rels'].sort());
+  assert.deepEqual(Object.keys(entries).sort(), ['3D/3dmodel.model', 'Metadata/model_settings.config', 'Metadata/project_settings.config', 'Metadata/plate_1.png', '[Content_Types].xml', '_rels/.rels'].sort());
   const parser = new DOMParser();
+  const thumbnail = entries['Metadata/plate_1.png'];
+  assert.deepEqual(Array.from(thumbnail.subarray(0,8)), [137,80,78,71,13,10,26,10]);
+  const thumbnailView = new DataView(thumbnail.buffer, thumbnail.byteOffset, thumbnail.byteLength);
+  assert.equal(thumbnailView.getUint32(16), 512);
+  assert.equal(thumbnailView.getUint32(20), 512);
+  const idatLength = thumbnailView.getUint32(33);
+  assert.equal(strFromU8(thumbnail.subarray(37,41)), 'IDAT');
+  const pixels = unzlibSync(thumbnail.subarray(41,41+idatLength));
+  assert.equal(pixels.length,512*(512*4+1));
+  let opaque = 0, black = 0, white = 0;
+  for(let row=0;row<512;row++) {
+    assert.equal(pixels[row*2049],0);
+    for(let col=0;col<512;col++) {
+      const i=row*2049+1+col*4;
+      if(pixels[i+3]===255){opaque++;if(pixels[i]===0)black++;if(pixels[i]===255)white++;}
+    }
+  }
+  assert.ok(opaque>1000 && opaque<512*512 && black>100, 'Thumbnail must contain actual artwork and transparent padding.');
+  if(source===sources[1] || source===sources[3])assert.ok(white>100, 'Recessed areas show the white base.');
+  const relationships = parser.parseFromString(strFromU8(entries['_rels/.rels']), 'application/xml');
+  const thumbnailRel = Array.from(relationships.getElementsByTagName('Relationship')).find(r => r.getAttribute('Type')?.endsWith('/metadata/thumbnail'))!;
+  assert.equal(thumbnailRel.getAttribute('Target'), '/Metadata/plate_1.png');
+  assert.ok(entries[thumbnailRel.getAttribute('Target')!.slice(1)]);
+  assert.match(strFromU8(entries['[Content_Types].xml']), /Extension="png" ContentType="image\/png"/);
   const doc = parser.parseFromString(strFromU8(entries['3D/3dmodel.model']), 'application/xml');
   assert.equal(doc.documentElement!.getAttribute('unit'), 'millimeter');
   assert.equal(doc.getElementsByTagName('metadata')[1].textContent, 'Artwork & "white/black" <test>');

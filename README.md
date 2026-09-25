@@ -60,6 +60,8 @@ Use **Download coloured 3MF** on a validated SVG or image model. The archive con
 
 Open the 3MF in Bambu Studio and retain its colour/material assignments. If your version presents a colour-mapping dialog, map white to your white filament and black to your black filament. Select your printer, nozzle, filament profiles and process settings, then slice and check Preview. The download contains no printer preset, process settings or G-code. Filament colours are assignments, not a guarantee of the physically loaded filament.
 
+New 3MF downloads include a 512 × 512 PNG top-view thumbnail of the actual white/black model, linked through the standard package-thumbnail and Bambu cover relationships. Existing downloads must be regenerated to include it. Windows Explorer display depends on an enabled 3MF thumbnail handler and thumbnail settings; installing Bambu Studio alone does not guarantee that configuration.
+
 Export runs in a separate browser worker and streams compressed XML, keeping the UI responsive. Removing/retrying the model or leaving the workspace cancels its export. The preview buffers remain usable after downloading. The current STL ZIP download still contains STLs.
 
 Automated checks cover closed meshes, part heights/volumes, holes and islands, XML/ZIP packaging, Bambu component/part IDs and filament mapping, plus both production workers. A desktop Bambu Studio import was not executable in the development environment because required system libraries were unavailable.

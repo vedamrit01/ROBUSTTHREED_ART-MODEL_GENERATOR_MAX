@@ -103,6 +103,8 @@ if(isMainThread) {
       });
       assert.ok(exported.bytes instanceof Uint8Array);
       const entries=unzipSync(exported.bytes);
+      assert.deepEqual(Array.from(entries['Metadata/plate_1.png'].subarray(0,8)),[137,80,78,71,13,10,26,10]);
+      assert.match(strFromU8(entries['_rels/.rels']),/metadata\/thumbnail/);
       assert.match(strFromU8(entries['3D/3dmodel.model']),/White base - 1.6 mm/);
       assert.match(strFromU8(entries['Metadata/model_settings.config']),/key="extruder" value="2"/);
       assert.deepEqual(JSON.parse(strFromU8(entries['Metadata/project_settings.config'])).filament_colour,['#FFFFFF','#000000']);

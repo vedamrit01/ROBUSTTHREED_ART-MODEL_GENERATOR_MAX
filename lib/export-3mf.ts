@@ -1,5 +1,6 @@
 import { Zip, ZipDeflate, strToU8 } from 'fflate';
 import { LIMITS, PRESET } from './preset';
+import { modelThumbnail } from './model-thumbnail';
 
 export type ExportMesh = { positions: Float32Array; indices: Uint32Array };
 export type ThreeMfRequest = ExportMesh & { name: string };
@@ -71,12 +72,12 @@ export function exportThreeMf(mesh: ThreeMfRequest): Uint8Array {
     if (error) throw error;
     chunks.push(data); length += data.length;
   });
-  const add = (name: string, text: string) => {
+  const add = (name: string, text: string | Uint8Array) => {
     const entry = new ZipDeflate(name, { level: 6 });
-    archive.add(entry); entry.push(strToU8(text), true);
+    archive.add(entry); entry.push(typeof text === 'string' ? strToU8(text) : text, true);
   };
-  add('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/><Default Extension="config" ContentType="application/octet-stream"/></Types>');
-  add('_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/3D/3dmodel.model"/></Relationships>');
+  add('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="config" ContentType="application/octet-stream"/></Types>');
+  add('_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/3D/3dmodel.model"/><Relationship Id="thumbnail" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail" Target="/Metadata/plate_1.png"/><Relationship Id="cover" Type="http://schemas.bambulab.com/package/2021/cover-thumbnail-middle" Target="/Metadata/plate_1.png"/></Relationships>');
   const model = new ZipDeflate('3D/3dmodel.model', { level: 6 });
   archive.add(model);
   // Stream XML in small blocks: five million triangles must not create one
@@ -107,6 +108,7 @@ export function exportThreeMf(mesh: ThreeMfRequest): Uint8Array {
   // ranges). Only filament assignments are included; no machine/process preset.
   add('Metadata/model_settings.config', `<?xml version="1.0" encoding="UTF-8"?><config><object id="4"><metadata key="name" value="${xml(mesh.name)}"/><metadata key="extruder" value="1"/><part id="2" subtype="normal_part"><metadata key="name" value="White base - 1.6 mm"/><metadata key="extruder" value="1"/></part><part id="3" subtype="normal_part"><metadata key="name" value="Black raised artwork - 0.6 mm"/><metadata key="extruder" value="2"/></part></object></config>`);
   add('Metadata/project_settings.config', JSON.stringify({ filament_colour: ['#FFFFFF', '#000000'] }));
+  add('Metadata/plate_1.png', modelThumbnail(mesh));
   archive.end();
   const result = new Uint8Array(length);
   let offset = 0;
